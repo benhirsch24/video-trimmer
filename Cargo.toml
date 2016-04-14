@@ -1,0 +1,11 @@
+[package]
+name = "video-trimmer"
+version = "0.1.0"
+authors = ["benhirsch24 <hirschb@lab126.com>"]
+
+[lib]
+name = "trim"
+
+[[bin]]
+name = "video-trimmer"
+path = "src/bin/main.rs"
