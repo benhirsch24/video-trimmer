@@ -14,6 +14,10 @@ pub fn trim_video(filename: &String, start: f32, stop: f32, moov: Option<usize>)
         Err(e) => panic!(e)
     };
 
-    println!("Moov atom has size: {}", moov_atom.size);
+    println!("{}", moov_atom);
+    match moov_atom.mvhd {
+        Some(mvhd) => println!("{:?}", mvhd),
+        None       => {}
+    };
 }
 
