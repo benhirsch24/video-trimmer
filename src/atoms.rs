@@ -2,7 +2,7 @@ use parser::*;
 use std::fmt;
 
 pub trait AtomParser<T> {
-    fn parse(parser: &mut MParser) -> Result<T, String>;
+    fn parse(size: u32, parser: &mut MParser) -> Result<T, String>;
 }
 
 #[derive(Debug)]
@@ -56,21 +56,9 @@ impl MovieHeaderAtom {
     }
 }
 
-fn atom_type_and_size(atom: &str, parser: &mut MParser) -> Result<u32, String> {
-    let size = try!(parser.read_u32());
-    let typ = try!(TypeParserAction::try_parse(parser));
-    if typ != atom.to_string() {
-        return Err(format!("Type of atom didn't match; expected \"{}\" got {}", atom, typ));
-    }
-
-    Ok(size)
-}
-
 impl AtomParser<MovieHeaderAtom> for MovieHeaderAtom {
-    fn parse(parser: &mut MParser) -> Result<MovieHeaderAtom, String> {
+    fn parse(size: u32, parser: &mut MParser) -> Result<MovieHeaderAtom, String> {
         let location = parser.get_position();
-
-        let size = try!(atom_type_and_size("mvhd", parser));
 
         let version = try!(parser.read_u8());
         let flags = try!(parser.read_flags());
@@ -82,7 +70,7 @@ impl AtomParser<MovieHeaderAtom> for MovieHeaderAtom {
         let volume = try!(parser.read_fixed16());
 
         // matrix advances by 36 bytes
-        parser.move_cursor(36);
+        try!(parser.move_cursor(36));
 
         let preview_time = try!(parser.read_u32());
         let preview_duration = try!(parser.read_u32());
@@ -117,15 +105,13 @@ impl AtomParser<MovieHeaderAtom> for MovieHeaderAtom {
 pub struct MoovAtom {
     pub location: usize,
     pub size: u32,
-    pub mvhd: Option<MovieHeaderAtom>
 }
 
 impl MoovAtom {
-    fn new(location: usize, size: u32, mvhd: Option<MovieHeaderAtom>) -> MoovAtom {
+    pub fn new(location: usize, size: u32) -> MoovAtom {
         MoovAtom {
             location: location,
-            size: size,
-            mvhd: mvhd
+            size: size
         }
     }
 }
@@ -139,30 +125,16 @@ impl fmt::Display for MoovAtom {
     }
 }
 
-macro_rules! parse_atom {
-    ( $atom:ident, $parser:ident ) => {
-        {
-            //$parser.push_stack();
-            try!(
-                match $atom::parse($parser) {
-                    Ok(a)  => Ok(Some(a)),
-                    Err(e) => {
-                        //$parser.unwind();
-                        Err(e)
-                    }
-                }
-            )
-        }
-    }
+pub struct MovieAtoms {
+    pub moov: Option<MoovAtom>,
+    pub mvhd: Option<MovieHeaderAtom>
 }
 
-impl AtomParser<MoovAtom> for MoovAtom {
-    fn parse(parser: &mut MParser) -> Result<MoovAtom, String> {
-        let location = parser.get_position();
-        let size = try!(atom_type_and_size("moov", parser));
-
-        let mvhd_atom = parse_atom!(MovieHeaderAtom, parser);
-
-        return Ok(MoovAtom::new(location, size, mvhd_atom));
+impl MovieAtoms {
+    pub fn new() -> MovieAtoms {
+        MovieAtoms {
+            moov: None,
+            mvhd: None
+        }
     }
 }
