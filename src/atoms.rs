@@ -1,8 +1,16 @@
 use parser::*;
 use std::fmt;
 
+pub fn atom_type_and_size(parser: &mut MParserView) -> Result<(u32, String), String> {
+    let size = try!(parser.read_u32());
+    let typ = try!(TypeParserAction::try_parse(parser));
+
+    Ok((size, typ))
+}
+
 pub trait AtomParser<T> {
-    fn parse(size: u32, parser: &mut MParser) -> Result<T, String>;
+    fn parse(size: u32, parser: &mut MParserView) -> Result<T, String>;
+    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String>;
 }
 
 #[derive(Debug)]
@@ -57,7 +65,7 @@ impl MovieHeaderAtom {
 }
 
 impl AtomParser<MovieHeaderAtom> for MovieHeaderAtom {
-    fn parse(size: u32, parser: &mut MParser) -> Result<MovieHeaderAtom, String> {
+    fn parse(size: u32, parser: &mut MParserView) -> Result<MovieHeaderAtom, String> {
         let location = parser.get_position();
 
         let version = try!(parser.read_u8());
@@ -100,6 +108,10 @@ impl AtomParser<MovieHeaderAtom> for MovieHeaderAtom {
             next_track_id
                 ))
     }
+
+    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String> {
+        unimplemented!();
+    }
 }
 
 pub struct MoovAtom {
@@ -113,6 +125,35 @@ impl MoovAtom {
             location: location,
             size: size
         }
+    }
+}
+
+impl AtomParser<MoovAtom> for MoovAtom {
+    fn parse(size: u32, parser: &mut MParserView) -> Result<MoovAtom, String> {
+        unimplemented!();
+    }
+
+    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String> {
+        let mut atom_positions = vec![];
+
+        try!(parser.move_cursor(8));
+        loop {
+            let (size, typ) = match atom_type_and_size(parser) {
+                Ok((s,t)) => (s, t),
+                Err(_)    => break
+            };
+
+            let actual_pos = parser.get_position() - 8;
+            let atoms = vec!["mvhd".to_string(), "iods".to_string(), "trak".to_string(), "udta".to_string()];
+            if atoms.contains(&typ) {
+                atom_positions.push(actual_pos);
+                parser.set_position(actual_pos + (size as usize));
+            } else {
+                break;
+            }
+        }
+
+        Ok(atom_positions)
     }
 }
 
