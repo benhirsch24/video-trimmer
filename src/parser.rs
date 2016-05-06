@@ -140,6 +140,25 @@ impl MParser {
         Ok(float)
     }
 
+    pub fn read_string(&mut self) -> Result<String, String> {
+        check_length!(4, self, "read_string()");
+
+        let mut bytes = Vec::new();
+        bytes.push(self.get_byte(0));
+        bytes.push(self.get_byte(1));
+        bytes.push(self.get_byte(2));
+        bytes.push(self.get_byte(3));
+
+        match String::from_utf8(bytes) {
+            Ok(s)  => {
+                try!(self.move_cursor(4));
+
+                Ok(s)
+            },
+            Err(e) => Err(format!("Error parsing type string: {}", e))
+        }
+    }
+
     pub fn get_view_at(&mut self, position: usize) -> MParserView {
         MParserView::new(position, self)
     }
@@ -167,7 +186,9 @@ impl<'a> Drop for MParserView<'a> {
 }
 
 impl<'a> MParserView<'a> {
-    pub fn clone_view(&mut self) -> MParserView { MParserView::new(self.initial_position, self.parser) }
+    pub fn reset(&mut self) { self.parser.set_position(self.initial_position); }
+
+    pub fn get_view_at(&mut self, position: usize) -> MParserView { MParserView::new(position, self.parser) }
 
     pub fn move_cursor(&mut self, delta: isize) -> Result<(), String> { self.parser.move_cursor(delta) }
     pub fn get_position(&self) -> usize { self.parser.get_position() }
@@ -182,6 +203,7 @@ impl<'a> MParserView<'a> {
     pub fn read_fixed32(&mut self) -> Result<f32, String> { self.parser.read_fixed32() }
     pub fn read_fixed16(&mut self) -> Result<f32, String> { self.parser.read_fixed16() }
     pub fn read_flags(&mut self) -> Result<u32, String> { self.parser.read_flags() }
+    pub fn read_string(&mut self) -> Result<String, String> { self.parser.read_string() }
 }
 
 pub trait ParserAction<T> {

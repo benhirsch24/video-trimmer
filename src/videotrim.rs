@@ -76,10 +76,14 @@ pub fn trim_video(video_in: &str, video_out: &str, start: f32, stop: f32) -> Res
                     atoms.moov = atom;
                 },
                 "mvhd" => {
-                    let atom = Some(try!(MovieHeaderAtom::parse(size, &mut view)));
+                    let atom = Some(try!(MovieHeaderAtom::parse(&mut view)));
                     atoms.mvhd = atom;
                 },
-                _      => { println!("Haven't yet implemented {}", typ); }
+                "trak" => {
+                    let atom = try!(TrakAtom::parse(&mut view));
+                    atoms.traks.push(atom);
+                },
+                _      => { println!("Need to parse {}", typ); }
             };
 
             typ
@@ -90,8 +94,7 @@ pub fn trim_video(video_in: &str, video_out: &str, start: f32, stop: f32) -> Res
             let mut view = parser.get_view_at(stack_pos);
             let mut children = match typ.as_str() {
                 "moov" => try!(MoovAtom::get_children(&mut view)),
-                "mvhd" => try!(MovieHeaderAtom::get_children(&mut view)),
-                _      => { println!("Haven't yet implemented {}", typ); vec![] }
+                _      => vec![]
             };
             atom_position_stack.append(&mut children);
         }
