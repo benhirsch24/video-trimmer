@@ -5,7 +5,7 @@ use std::fmt;
 
 pub fn atom_type_and_size(parser: &mut MParserView) -> Result<(u32, String), String> {
     let size = try!(parser.read_u32());
-    let typ = try!(TypeParserAction::try_parse(parser));
+    let typ  = try!(TypeParserAction::try_parse(parser));
 
     Ok((size, typ))
 }
@@ -13,7 +13,7 @@ pub fn atom_type_and_size(parser: &mut MParserView) -> Result<(u32, String), Str
 fn loop_and_get_children(parser: &mut MParserView, atoms: &[&str]) -> Result<Vec<usize>, String> {
     let mut atom_positions = vec![];
 
-    try!(parser.move_cursor(8));
+    //try!(parser.move_cursor(8));
     loop {
         let (size, typ) = match atom_type_and_size(parser) {
             Ok((s,t)) => (s, t),
@@ -33,56 +33,147 @@ fn loop_and_get_children(parser: &mut MParserView, atoms: &[&str]) -> Result<Vec
     Ok(atom_positions)
 }
 
-pub trait AtomParser<T> {
-    fn parse(parser: &mut MParserView) -> Result<T, String>;
-    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String>;
+pub trait AtomParser {
+    fn parse(&mut self, parser: &mut MParserView, depth: usize) -> Result<(), String> {
+        let atom_position = parser.get_position();
+        try!(self.parse_self(parser));
+
+        // get children and add them to the stack
+        let mut atom_position_stack = vec![];
+        {
+            let mut view = parser.get_view_at(atom_position);
+            let mut children = try!(self.get_children(&mut view));
+            atom_position_stack.append(&mut children);
+        }
+
+        while atom_position_stack.len() > 0
+        {
+            // pop next atom position off stack which should exist
+            let stack_pos = atom_position_stack.pop().unwrap();
+
+            // visit (parse the atom)
+            {
+                let mut view = parser.get_view_at(stack_pos);
+
+                let (size, typ) = match atom_type_and_size(&mut view) {
+                    Ok((s,t)) => (s, t),
+                    Err(_)    => break
+                };
+
+                for _ in 0..(depth*3) {
+                    print!(" ");
+                }
+                println!("{} @ {} with size {} (stack len = {})", typ, stack_pos, size, atom_position_stack.len());
+
+                try!(self.parse_child(&typ, &mut view, depth + 1));
+            }
+        };
+
+        Ok(())
+    }
+
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String>;
+
+    fn get_children(&self, _: &mut MParserView) -> Result<Vec<usize>, String>
+    {
+        Ok(vec![])
+    }
+
+    fn parse_child(&mut self, _: &str, _: &mut MParserView, _: usize) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 /* ================================= Actual atoms ================================= */
 
 pub struct MovieAtoms {
-    pub moov: Option<MoovAtom>,
-    pub mvhd: Option<MovieHeaderAtom>,
-    pub traks: Vec<TrakAtom>
+    pub moov: Option<MoovAtom>
 }
 
 impl MovieAtoms {
     pub fn new() -> MovieAtoms {
         MovieAtoms {
-            moov: None,
-            mvhd: None,
-            traks: vec![]
+            moov: None
         }
+    }
+}
+
+impl AtomParser for MovieAtoms {
+    fn parse_self(&mut self, _: &mut MParserView) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn parse_child(&mut self, atom: &str, parser: &mut MParserView, depth: usize) -> Result<(), String> {
+        match atom {
+            "moov" => {
+                let mut moov = MoovAtom::new();
+                try!(moov.parse(parser, depth));
+                self.moov = Some(moov);
+            },
+            _      => { println!("Need to parse {}", atom); }
+        };
+
+        Ok(())
+    }
+
+    fn get_children(&self, parser: &mut MParserView) -> Result<Vec<usize>, String> {
+        let atoms = vec!["moov"];
+        let children = try!(loop_and_get_children(parser, &atoms));
+
+        Ok(children)
     }
 }
 
 pub struct MoovAtom {
     pub location: usize,
     pub size: u32,
+    pub mvhd: Option<MovieHeaderAtom>,
+    pub traks: Vec<TrakAtom>
 }
 
 impl MoovAtom {
-    pub fn new(location: usize, size: u32) -> MoovAtom {
+    pub fn new() -> MoovAtom {
         MoovAtom {
-            location: location,
-            size: size
+            location: 0,
+            size: 0,
+            mvhd: None,
+            traks: vec![]
         }
     }
 }
 
-impl AtomParser<MoovAtom> for MoovAtom {
-    fn parse(parser: &mut MParserView) -> Result<MoovAtom, String> {
-        let location = parser.get_position();
-        let size     = try!(parser.read_u32());
+impl AtomParser for MoovAtom {
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String> {
+        self.location = parser.get_position();
+        self.size     = try!(parser.read_u32());
 
         try!(parser.move_cursor(4));
 
-        Ok(MoovAtom::new(location, size))
+        Ok(())
     }
 
-    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String> {
+    fn parse_child(&mut self, atom: &str, parser: &mut MParserView, depth: usize) -> Result<(), String> {
+        match atom {
+            "mvhd" => {
+                let mut mvhd = MovieHeaderAtom::new();
+                try!(mvhd.parse(parser, depth));
+                self.mvhd = Some(mvhd);
+            },
+            "trak" => {
+                let mut trak = TrakAtom::new();
+                try!(trak.parse(parser, depth));
+                self.traks.push(trak);
+            },
+            _      => { println!("Need to parse {}", atom); }
+        };
+        Ok(())
+    }
+
+    fn get_children(&self, parser: &mut MParserView) -> Result<Vec<usize>, String> {
         let atoms = vec!["mvhd", "iods", "trak", "udta"];
-        loop_and_get_children(parser, &atoms)
+        let children = try!(loop_and_get_children(parser, &atoms));
+
+        Ok(children)
     }
 }
 
@@ -116,65 +207,53 @@ pub struct MovieHeaderAtom {
 }
 
 impl MovieHeaderAtom {
-    fn new(location: usize, size: u32, version: u8, flags: u32,
-           creation_time: u32, modification_time: u32, time_scale: u32,
-           duration: u32, rate: f32, volume: f32,
-           preview_time: u32, preview_duration: u32, poster_time: u32,
-           selection_time: u32, selection_duration: u32, current_time: u32,
-           next_track_id: u32) -> MovieHeaderAtom
+    fn new() -> MovieHeaderAtom
     {
         MovieHeaderAtom {
-            location: location,
-            size: size,
-            version: version,
-            flags: flags,
-            creation_time: creation_time,
-            modification_time: modification_time,
-            time_scale: time_scale,
-            duration: duration,
-            rate: rate,
-            volume: volume,
-            preview_time: preview_time,
-            preview_duration: preview_duration,
-            poster_time: poster_time,
-            selection_time: selection_time,
-            selection_duration: selection_duration,
-            current_time: current_time,
-            next_track_id: next_track_id
+            location: 0,
+            size: 0,
+            version: 0,
+            flags: 0,
+            creation_time: 0,
+            modification_time: 0,
+            time_scale: 0,
+            duration: 0,
+            rate: 0.0f32,
+            volume: 0.0f32,
+            preview_time: 0,
+            preview_duration: 0,
+            poster_time: 0,
+            selection_time: 0,
+            selection_duration: 0,
+            current_time: 0,
+            next_track_id: 0
         }
     }
 }
 
-impl AtomParser<MovieHeaderAtom> for MovieHeaderAtom {
-    fn parse(parser: &mut MParserView) -> Result<MovieHeaderAtom, String> {
-        let location                   = parser.get_position();
-        let size                       = try!(parser.read_u32());
+impl AtomParser for MovieHeaderAtom {
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String> {
+        self.location                   = parser.get_position();
+        self.size                       = try!(parser.read_u32());
         try!(parser.move_cursor(4)); // reserved
-        let version                    = try!(parser.read_u8());
-        let flags                      = try!(parser.read_flags());
-        let creation_time              = try!(parser.read_u32());
-        let modification_time          = try!(parser.read_u32());
-        let time_scale                 = try!(parser.read_u32());
-        let duration                   = try!(parser.read_u32());
-        let rate                       = try!(parser.read_fixed32());
-        let volume                     = try!(parser.read_fixed16());
+        self.version                    = try!(parser.read_u8());
+        self.flags                      = try!(parser.read_flags());
+        self.creation_time              = try!(parser.read_u32());
+        self.modification_time          = try!(parser.read_u32());
+        self.time_scale                 = try!(parser.read_u32());
+        self.duration                   = try!(parser.read_u32());
+        self.rate                       = try!(parser.read_fixed32());
+        self.volume                     = try!(parser.read_fixed16());
         try!(parser.move_cursor(36)); // matrix
-        let preview_time               = try!(parser.read_u32());
-        let preview_duration           = try!(parser.read_u32());
-        let poster_time                = try!(parser.read_u32());
-        let selection_time             = try!(parser.read_u32());
-        let selection_duration         = try!(parser.read_u32());
-        let current_time               = try!(parser.read_u32());
-        let next_track_id              = try!(parser.read_u32());
+        self.preview_time               = try!(parser.read_u32());
+        self.preview_duration           = try!(parser.read_u32());
+        self.poster_time                = try!(parser.read_u32());
+        self.selection_time             = try!(parser.read_u32());
+        self.selection_duration         = try!(parser.read_u32());
+        self.current_time               = try!(parser.read_u32());
+        self.next_track_id              = try!(parser.read_u32());
 
-        Ok(MovieHeaderAtom::new(location, size, version, flags, creation_time,
-                                modification_time, time_scale, duration, rate,
-                                volume, preview_time, preview_duration, poster_time,
-                                selection_time, selection_duration, current_time, next_track_id))
-    }
-
-    fn get_children(_: &mut MParserView) -> Result<Vec<usize>, String> {
-        Ok(vec![])
+        Ok(())
     }
 }
 
@@ -186,80 +265,49 @@ pub struct TrakAtom {
 }
 
 impl TrakAtom {
-    fn new(location: usize, size: u32, tkhd: Option<TrakHeaderAtom>, mdia: Option<MediaAtom>) -> TrakAtom {
+    fn new() -> TrakAtom {
         TrakAtom {
-            location: location,
-            size: size,
-            tkhd: tkhd,
-            mdia: mdia
+            location: 0,
+            size: 0,
+            tkhd: None,
+            mdia: None
         }
     }
 }
 
-impl AtomParser<TrakAtom> for TrakAtom {
-    fn parse(parser: &mut MParserView) -> Result<TrakAtom, String> {
-        let location = parser.get_position();
-        let size     = try!(parser.read_u32());
-        let mut tkhd = None;
-        let mut mdia = None;
-
-        parser.reset();
-
-        let mut atom_position_stack = vec![];
-        let mut trak_atom_children = try!(TrakAtom::get_children(parser));
-        atom_position_stack.append(&mut trak_atom_children);
-
-        while !atom_position_stack.is_empty() {
-            // pop next atom position off stack which should exist
-            let stack_pos = atom_position_stack.pop().unwrap();
-
-            // visit (parse the atom)
-            let typ = {
-                let mut view = parser.get_view_at(stack_pos);
-
-                let (size, typ) = match atom_type_and_size(&mut view) {
-                    Ok((s,t)) => (s, t),
-                    Err(_)    => break
-                };
-
-                println!("   {} @ {} with size {} (stack len = {})", typ, stack_pos, size, atom_position_stack.len());
-
-                match typ.as_str() {
-                    "tkhd" => {
-                        let atom = try!(TrakHeaderAtom::parse(&mut view));
-                        tkhd = Some(atom);
-                    },
-                    "mdia" => {
-                        let atom = try!(MediaAtom::parse(&mut view));
-                        mdia = Some(atom);
-                    },
-                    _      => { println!("Need to parse {}", typ); }
-                }
-
-                typ
-            };
-
-            // get children and add them to the stack
-            {
-                let mut view = parser.get_view_at(stack_pos);
-                let mut children = match typ.as_str() {
-                    "mdia" => try!(MediaAtom::get_children(&mut view)),
-                    _      => vec![]
-                };
-                atom_position_stack.append(&mut children);
-            }
-        }
-
-        Ok(TrakAtom::new(location, size, tkhd, mdia))
+impl AtomParser for TrakAtom {
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String> {
+        self.location = parser.get_position();
+        self.size     = try!(parser.read_u32());
+        Ok(())
     }
 
-    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String> {
+    fn parse_child(&mut self, atom: &str, parser: &mut MParserView, depth: usize) -> Result<(), String> {
+        match atom {
+            "tkhd" => {
+                let mut tkhd = TrakHeaderAtom::new();
+                try!(tkhd.parse(parser, depth));
+                self.tkhd = Some(tkhd);
+            },
+            "mdia" => {
+                let mut mdia = MediaAtom::new();
+                try!(mdia.parse(parser, depth));
+                self.mdia = Some(mdia);
+            },
+            _      => { println!("Need to parse {}", atom); }
+        };
+
+        Ok(())
+    }
+
+    fn get_children(&self, parser: &mut MParserView) -> Result<Vec<usize>, String> {
         let atoms = vec![
             "tkhd", "tapt", "clip", "matt", "edts", "tref",
             "txas", "load", "imap", "mdia", "udta"
         ];
+        let children = try!(loop_and_get_children(parser, &atoms));
 
-        loop_and_get_children(parser, &atoms)
+        Ok(children)
     }
 }
 
@@ -280,54 +328,47 @@ pub struct TrakHeaderAtom {
 }
 
 impl TrakHeaderAtom {
-    fn new(location: usize, size: u32, version: u8, flags: u32, creation_time: u32, modification_time: u32,
-           track_id: u32, duration: u32, layer: u16, alternate_group: u16, volume: f32,
-           track_width: f32, track_height: f32) -> TrakHeaderAtom {
+    fn new() -> TrakHeaderAtom {
         TrakHeaderAtom {
-            location: location,
-            size: size,
-            version: version,
-            flags: flags,
-            creation_time: creation_time,
-            modification_time: modification_time,
-            track_id: track_id,
-            duration: duration,
-            layer: layer,
-            alternate_group: alternate_group,
-            volume: volume,
-            track_width: track_width,
-            track_height: track_height
+            location: 0,
+            size: 0,
+            version: 0,
+            flags: 0,
+            creation_time: 0,
+            modification_time: 0,
+            track_id: 0,
+            duration: 0,
+            layer: 0,
+            alternate_group: 0,
+            volume: 0.0f32,
+            track_width: 0.0f32,
+            track_height: 0.0f32
         }
     }
 }
 
-impl AtomParser<TrakHeaderAtom> for TrakHeaderAtom {
-    fn parse(parser: &mut MParserView) -> Result<TrakHeaderAtom, String> {
-        let location                  = parser.get_position();
-        let size                      = try!(parser.read_u32());
+impl AtomParser for TrakHeaderAtom {
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String> {
+        self.location                  = parser.get_position();
+        self.size                      = try!(parser.read_u32());
         try!(parser.move_cursor(4));
-        let version                   = try!(parser.read_u8());
-        let flags                     = try!(parser.read_flags());
-        let creation_time             = try!(parser.read_u32());
-        let modification_time         = try!(parser.read_u32());
-        let track_id                  = try!(parser.read_u32());
+        self.version                   = try!(parser.read_u8());
+        self.flags                     = try!(parser.read_flags());
+        self.creation_time             = try!(parser.read_u32());
+        self.modification_time         = try!(parser.read_u32());
+        self.track_id                  = try!(parser.read_u32());
         try!(parser.move_cursor(4));  // reserved
-        let duration                  = try!(parser.read_u32());
+        self.duration                  = try!(parser.read_u32());
         try!(parser.move_cursor(8));  // reserved
-        let layer                     = try!(parser.read_u16());
-        let alternate_group           = try!(parser.read_u16());
-        let volume                    = try!(parser.read_fixed16());
+        self.layer                     = try!(parser.read_u16());
+        self.alternate_group           = try!(parser.read_u16());
+        self.volume                    = try!(parser.read_fixed16());
         try!(parser.move_cursor(2));  // reserved
         try!(parser.move_cursor(36)); // matrix
-        let track_width               = try!(parser.read_fixed32());
-        let track_height              = try!(parser.read_fixed32());
+        self.track_width               = try!(parser.read_fixed32());
+        self.track_height              = try!(parser.read_fixed32());
 
-        Ok(TrakHeaderAtom::new(location, size, version, flags, creation_time, modification_time, track_id,
-                               duration, layer, alternate_group, volume, track_width, track_height))
-    }
-
-    fn get_children(_: &mut MParserView) -> Result<Vec<usize>, String> {
-        Ok(vec![])
+        Ok(())
     }
 }
 
@@ -341,37 +382,48 @@ pub struct MediaAtom {
 }
 
 impl MediaAtom {
-    fn new(location: usize, size: u32) -> MediaAtom {
+    fn new() -> MediaAtom {
         MediaAtom {
-            location: location,
-            size: size,
+            location: 0,
+            size: 0,
             mdhd: None,
             hdlr: None
         }
     }
 }
 
-impl AtomParser<MediaAtom> for MediaAtom {
-    fn parse(parser: &mut MParserView) -> Result<MediaAtom, String> {
-        let location                 = parser.get_position();
-        let size                     = try!(parser.read_u32());
+impl AtomParser for MediaAtom {
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String> {
+        self.location                 = parser.get_position();
+        self.size                     = try!(parser.read_u32());
         try!(parser.move_cursor(4));
 
-//                    "mdhd" => {
-//                        let atom = try!(MediaHeaderAtom::parse(&mut view));
-//                        atoms.traks[traknum - 1].mdia.unwrap().mdhd = Some(atom);
-//                    },
-//                    "hdlr" => {
-//                        let atom = try!(HandlerReferenceAtom::parse(&mut view));
-//                        atoms.traks[traknum - 1].mdia.unwrap().hdlr = Some(atom);
-//                    },
-
-        Ok(MediaAtom::new(location, size))
+        Ok(())
     }
 
-    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String> {
+    fn parse_child(&mut self, atom: &str, parser: &mut MParserView, depth: usize) -> Result<(), String> {
+        match atom {
+            "mdhd" => {
+                let mut mdhd = MediaHeaderAtom::new();
+                try!(mdhd.parse(parser, depth));
+                self.mdhd = Some(mdhd);
+            },
+            "hdlr" => {
+                let mut hdlr = HandlerReferenceAtom::new();
+                try!(hdlr.parse(parser, depth));
+                self.hdlr = Some(hdlr);
+            },
+            _      => { println!("Need to parse {}", atom); }
+        };
+
+        Ok(())
+    }
+
+    fn get_children(&self, parser: &mut MParserView) -> Result<Vec<usize>, String> {
         let atoms = vec!["mdhd", "elng", "hdlr", "minf", "udta"];
-        loop_and_get_children(parser, &atoms)
+        let children = try!(loop_and_get_children(parser, &atoms));
+
+        Ok(children)
     }
 }
 
@@ -389,39 +441,31 @@ pub struct MediaHeaderAtom {
 }
 
 impl MediaHeaderAtom {
-    fn new( location: usize, size: u32, version: u8, flags: u32, creation_time: u32,
-            modification_time: u32, time_scale: u32, duration: u32, language: u16,
-            quality: u16) -> MediaHeaderAtom
+    fn new() -> MediaHeaderAtom
     {
         MediaHeaderAtom {
-            location: location, size: size, version: version, flags: flags,
-            creation_time: creation_time, modification_time: modification_time,
-            time_scale: time_scale, duration: duration, language: language, quality: quality
+            location: 0, size: 0, version: 0, flags: 0,
+            creation_time: 0, modification_time: 0,
+            time_scale: 0, duration: 0, language: 0, quality: 0
         }
     }
 }
 
-impl AtomParser<MediaHeaderAtom> for MediaHeaderAtom {
-    fn parse(parser: &mut MParserView) -> Result<MediaHeaderAtom, String> {
-        let location                 = parser.get_position();
-        let size                     = try!(parser.read_u32());
+impl AtomParser for MediaHeaderAtom {
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String> {
+        self.location                 = parser.get_position();
+        self.size                     = try!(parser.read_u32());
         try!(parser.move_cursor(4));
-        let version                  = try!(parser.read_u8());
-        let flags                    = try!(parser.read_flags());
-        let creation_time            = try!(parser.read_u32());
-        let modification_time        = try!(parser.read_u32());
-        let time_scale               = try!(parser.read_u32());
-        let duration                 = try!(parser.read_u32());
-        let language                 = try!(parser.read_u16());
-        let quality                  = try!(parser.read_u16());
+        self.version                  = try!(parser.read_u8());
+        self.flags                    = try!(parser.read_flags());
+        self.creation_time            = try!(parser.read_u32());
+        self.modification_time        = try!(parser.read_u32());
+        self.time_scale               = try!(parser.read_u32());
+        self.duration                 = try!(parser.read_u32());
+        self.language                 = try!(parser.read_u16());
+        self.quality                  = try!(parser.read_u16());
 
-        Ok(MediaHeaderAtom::new(location, size, version, flags, creation_time,
-                                modification_time, time_scale, duration, language,
-                                quality))
-    }
-
-    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String> {
-        Ok(vec![])
+        Ok(())
     }
 }
 
@@ -435,29 +479,24 @@ pub struct HandlerReferenceAtom {
 }
 
 impl HandlerReferenceAtom {
-    fn new(location: usize, size: u32, version: u8, flags: u32, component_type: u32,
-           component_subtype: u32) -> HandlerReferenceAtom
+    fn new() -> HandlerReferenceAtom
     {
         HandlerReferenceAtom {
-            location: location, size: size, version: version, flags: flags,
-            component_type: component_type, component_subtype: component_subtype
+            location: 0, size: 0, version: 0, flags: 0,
+            component_type: 0, component_subtype: 0
         }
     }
 }
 
-impl AtomParser<HandlerReferenceAtom> for HandlerReferenceAtom {
-    fn parse(parser: &mut MParserView) -> Result<HandlerReferenceAtom, String> {
-        let location = parser.get_position();
-        let size = try!(parser.read_u32());
-        let version = try!(parser.read_u8());
-        let flags = try!(parser.read_flags());
-        let component_type = try!(parser.read_u32());
-        let component_subtype = try!(parser.read_u32());
+impl AtomParser for HandlerReferenceAtom {
+    fn parse_self(&mut self, parser: &mut MParserView) -> Result<(), String> {
+        self.location = parser.get_position();
+        self.size = try!(parser.read_u32());
+        self.version = try!(parser.read_u8());
+        self.flags = try!(parser.read_flags());
+        self.component_type = try!(parser.read_u32());
+        self.component_subtype = try!(parser.read_u32());
 
-        Ok(HandlerReferenceAtom::new(location, size, version, flags, component_type, component_subtype))
-    }
-
-    fn get_children(parser: &mut MParserView) -> Result<Vec<usize>, String> {
-        Ok(vec![])
+        Ok(())
     }
 }

@@ -50,55 +50,10 @@ pub fn trim_video(video_in: &str, video_out: &str, start: f32, stop: f32) -> Res
     };
 
     let moov_pos = try!(find_moov(&parser.data));
-    let mut atom_position_stack = vec![moov_pos];
 
     let mut atoms = MovieAtoms::new();
-    while atom_position_stack.len() > 0
-    {
-        // pop next atom position off stack which should exist
-        let stack_pos = atom_position_stack.pop().unwrap();
-
-        // visit (parse the atom)
-        let typ = {
-            let position = parser.get_position();
-            let mut view = parser.get_view_at(stack_pos);
-
-            let (size, typ) = match atom_type_and_size(&mut view) {
-                Ok((s,t)) => (s, t),
-                Err(_)    => break
-            };
-
-            println!("{} @ {} with size {} (stack len = {})", typ, stack_pos, size, atom_position_stack.len());
-
-            match typ.as_str() {
-                "moov" => {
-                    let atom = Some(MoovAtom::new(position, size));
-                    atoms.moov = atom;
-                },
-                "mvhd" => {
-                    let atom = Some(try!(MovieHeaderAtom::parse(&mut view)));
-                    atoms.mvhd = atom;
-                },
-                "trak" => {
-                    let atom = try!(TrakAtom::parse(&mut view));
-                    atoms.traks.push(atom);
-                },
-                _      => { println!("Need to parse {}", typ); }
-            };
-
-            typ
-        };
-
-        // get children and add them to the stack
-        {
-            let mut view = parser.get_view_at(stack_pos);
-            let mut children = match typ.as_str() {
-                "moov" => try!(MoovAtom::get_children(&mut view)),
-                _      => vec![]
-            };
-            atom_position_stack.append(&mut children);
-        }
-    };
+    let mut view = parser.get_view_at(moov_pos);
+    try!(atoms.parse(&mut view, 0));
 
     Ok(())
 }
